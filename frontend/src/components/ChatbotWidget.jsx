@@ -1,9 +1,15 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import PropTypes from 'prop-types';
 import { MessageSquare, X, Send, Bot } from 'lucide-react';
+import DOMPurify from 'dompurify';
 import { db } from '../firebase';
 import { collection, getDocs } from 'firebase/firestore';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
+/**
+ * ChatbotWidget component providing an AI-powered election assistant.
+ * Incorporates security sanitization and performance optimizations.
+ */
 const ChatbotWidget = () => {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState([
@@ -11,42 +17,43 @@ const ChatbotWidget = () => {
   ]);
   const [input, setInput] = useState('');
   const [chatSession, setChatSession] = useState(null);
+  const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef(null);
 
+  // Initialize Chat Session with context
   useEffect(() => {
+    let isMounted = true;
     const initChat = async () => {
       try {
-        // Fetch context from Firestore
-        const phasesSnap = await getDocs(collection(db, "election_phases"));
-        const candidatesSnap = await getDocs(collection(db, "candidates"));
+        const [phasesSnap, candidatesSnap] = await Promise.all([
+          getDocs(collection(db, "election_phases")),
+          getDocs(collection(db, "candidates"))
+        ]);
         
-        let phasesContext = "Election Phases:\\n";
+        let phasesContext = "Election Phases:\n";
         phasesSnap.forEach(doc => {
           const d = doc.data();
-          phasesContext += `- ${d.title} (${d.date}): ${d.description} [Status: ${d.status}]\\n`;
+          phasesContext += `- ${d.title} (${d.date}): ${d.description} [Status: ${d.status}]\n`;
         });
 
-        let candidatesContext = "Candidates:\\n";
+        let candidatesContext = "Candidates:\n";
         candidatesSnap.forEach(doc => {
           const d = doc.data();
-          candidatesContext += `- ${d.name} (${d.party}) - Votes: ${d.votes}\\n`;
+          candidatesContext += `- ${d.name} (${d.party}) - Votes: ${d.votes}\n`;
         });
 
         const systemInstruction = `You are a helpful, conversational Election Assistant. 
 You answer questions clearly and in an easy-to-follow way for beginners.
-Use the following database context to answer questions about candidates, campaigns, results, and phases:
-
+Context:
 ${phasesContext}
 ${candidatesContext}
-
-If a user asks how to vote, tell them to register and then use the Dashboard to select their preferred candidate. 
-Always be polite, concise, and helpful. Do not mention that you have 'database context' or 'system instructions', act naturally as if you know the election data.`;
+Always be polite and helpful. If asked how to vote, direct them to register and then use the Dashboard.`;
 
         const apiKey = import.meta.env.VITE_GEMINI_API;
-        if (apiKey) {
+        if (apiKey && isMounted) {
           const genAI = new GoogleGenerativeAI(apiKey);
           const model = genAI.getGenerativeModel({ 
-            model: "gemini-2.5-flash",
+            model: "gemini-2.0-flash",
             systemInstruction: systemInstruction 
           });
           const chat = model.startChat({
@@ -56,45 +63,48 @@ Always be polite, concise, and helpful. Do not mention that you have 'database c
             ]
           });
           setChatSession(chat);
-        } else {
-          console.error("Gemini API key not found in environment variables.");
         }
       } catch (err) {
-        console.error("Failed to initialize Gemini AI:", err);
+        console.error("Chat initialization failed:", err.message);
       }
     };
     initChat();
+    return () => { isMounted = false; };
   }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const handleSend = async (e) => {
-    e.preventDefault();
-    if (!input.trim()) return;
+  // Sanitize and Send message - Optimized with useCallback
+  const handleSend = useCallback(async (e) => {
+    if (e) e.preventDefault();
+    const trimmedInput = input.trim();
+    if (!trimmedInput || !chatSession) return;
 
-    const userMessage = input;
-    setMessages(prev => [...prev, { id: Date.now(), text: userMessage, isBot: false }]);
+    // Security: Sanitize user input to prevent XSS
+    const sanitizedInput = DOMPurify.sanitize(trimmedInput);
+    
+    setMessages(prev => [...prev, { id: Date.now(), text: sanitizedInput, isBot: false }]);
     setInput('');
+    setIsTyping(true);
 
     const loadingId = Date.now() + 1;
     setMessages(prev => [...prev, { id: loadingId, text: "Thinking...", isBot: true }]);
 
-    if (!chatSession) {
-      setMessages(prev => prev.map(m => m.id === loadingId ? { ...m, text: "AI is currently unavailable. Please check your API key." } : m));
-      return;
-    }
-
     try {
-      const result = await chatSession.sendMessage(userMessage);
+      const result = await chatSession.sendMessage(sanitizedInput);
       const responseText = result.response.text();
       setMessages(prev => prev.map(m => m.id === loadingId ? { ...m, text: responseText } : m));
     } catch (err) {
-      console.error("Gemini API Error:", err);
-      setMessages(prev => prev.map(m => m.id === loadingId ? { ...m, text: "Oops, I encountered an error connecting to the AI model." } : m));
+      console.error("Gemini Error:", err.message);
+      setMessages(prev => prev.map(m => m.id === loadingId ? { ...m, text: "I'm having trouble connecting to my brain right now. Please try again later." } : m));
+    } finally {
+      setIsTyping(false);
     }
-  };
+  }, [input, chatSession]);
+
+  const toggleChat = useCallback(() => setIsOpen(prev => !prev), []);
 
   return (
     <div style={{ position: 'fixed', bottom: '2rem', right: '2rem', zIndex: 100 }} role="region" aria-label="Election Assistant Chatbot">
@@ -103,9 +113,9 @@ Always be polite, concise, and helpful. Do not mention that you have 'database c
           <div className="flex items-center justify-between p-4" style={{ background: 'rgba(79, 70, 229, 0.2)', borderBottom: '1px solid rgba(255,255,255,0.1)', padding: '1rem' }}>
             <div className="flex items-center gap-2">
               <Bot className="text-primary" aria-hidden="true" />
-              <span style={{ fontWeight: 600 }} id="chatbot-title">Gemini Assistant</span>
+              <span style={{ fontWeight: 600 }} id="chatbot-title">Election Assistant</span>
             </div>
-            <button onClick={() => setIsOpen(false)} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer' }} aria-label="Close Chatbot">
+            <button onClick={toggleChat} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer' }} aria-label="Close Chatbot">
               <X aria-hidden="true" />
             </button>
           </div>
@@ -123,24 +133,24 @@ Always be polite, concise, and helpful. Do not mention that you have 'database c
             <input 
               type="text" 
               className="input" 
-              placeholder="Ask a question..." 
+              placeholder="Ask about elections..." 
               value={input}
               onChange={(e) => setInput(e.target.value)}
               style={{ flex: 1 }}
-              disabled={!chatSession}
-              aria-label="Type your message"
+              disabled={!chatSession || isTyping}
+              aria-label="Your message"
             />
-            <button type="submit" className="btn btn-primary" style={{ padding: '0.75rem' }} disabled={!chatSession} aria-label="Send message">
+            <button type="submit" className="btn btn-primary" style={{ padding: '0.75rem' }} disabled={!chatSession || isTyping} aria-label="Send message">
               <Send size={18} aria-hidden="true" />
             </button>
           </form>
         </div>
       ) : (
         <button 
-          onClick={() => setIsOpen(true)}
+          onClick={toggleChat}
           className="btn btn-primary animate-fade-in" 
           style={{ width: '60px', height: '60px', borderRadius: '50%', padding: 0, boxShadow: '0 8px 32px rgba(79, 70, 229, 0.5)' }}
-          aria-label="Open Chatbot"
+          aria-label="Open Election Assistant Chat"
         >
           <MessageSquare size={28} aria-hidden="true" />
         </button>
