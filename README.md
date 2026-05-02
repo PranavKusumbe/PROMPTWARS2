@@ -2,6 +2,10 @@
 
 A production-ready full-stack application designed to help users clearly understand the complete election process, timelines, and steps in an interactive, structured, and easy-to-follow manner.
 
+## Live Links
+- **Live Deployment (Cloud Run)**: [https://election-assistant-224852188719.us-central1.run.app](https://election-assistant-224852188719.us-central1.run.app)
+- **GitHub Repository**: [https://github.com/PranavKusumbe/PROMPTWARS2](https://github.com/PranavKusumbe/PROMPTWARS2)
+
 ## Tech Stack
 - **Frontend**: React (Vite), React Router, Lucide Icons
 - **Backend**: Java (Spring Boot)
