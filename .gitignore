@@ -1,0 +1,19 @@
+# Environment variables
+.env
+*.env
+
+# Java and Maven portable installations (local environment)
+jdk.zip
+maven.zip
+jdk-*/
+apache-maven-*/
+
+# Backend Spring Boot
+backend/target/
+backend/*.iml
+backend/.idea/
+.idea/
+
+# OS generated
+.DS_Store
+Thumbs.db
