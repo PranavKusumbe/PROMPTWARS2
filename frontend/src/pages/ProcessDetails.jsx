@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { Calendar, UserCheck, Flag, Inbox, Trophy, HelpCircle } from 'lucide-react';
 import { useFirestoreCollection } from '../hooks/useFirestore';
 
 /**
